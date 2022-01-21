@@ -1,0 +1,524 @@
+//FORWARD SCHEDULE
+
+#include "rcpsp.h"
+#include "generation.h"
+#include "best.h"
+using namespace std;
+
+string* changeFilename(int numOfFiles){
+    string *fileVector;
+    string tmp;
+    fileVector=new string [numOfFiles];
+    //fileVector.clear();
+    //filename="J301_1.RCP";
+    int a; int b;
+
+    a=(int)filename[5]-'0';
+    b=(int)filename[3]-'0';
+
+    for(int loop=0;loop<numOfFiles;loop++){
+        //cout<<"a: "<<a<<" b: "<<b<<endl;
+        //cout<<filename<<endl;
+        fileVector[loop]=filename;
+        if(a<10){
+            a++;
+            filename[3]=b+'0';
+            filename[5]=a+'0';
+        }
+        if(a==11){
+            filename=tmp;
+            a=1;
+            b++;
+            filename[3]=b+'0';
+            filename[5]=a+'0';
+        }
+        if(a==10){
+            tmp=filename;
+            filename="J301_10.RCP";
+            filename[3]=b+'0';
+            a=11;
+        }
+    }
+    return fileVector;
+}
+
+void createExcel(){
+    outfile<<filename<<",";
+        for(int i=0;i<inputs-1;i++){
+            outfile<<best.getBestSolution(i)<<",";
+        }
+        outfile<<endl;
+        outfile<<"-,";
+        for(int i=0;i<inputs-1;i++){
+            outfile<<best.getBestStart(i)<<",";
+        }
+        outfile<<endl;
+        outfile<<"-,";
+        for(int i=0;i<inputs-1;i++){
+            outfile<<best.getBestFinish(i)<<",";
+        }
+        outfile<<endl<<endl;
+}
+
+double fRand(double fMin, double fMax){ //calc random double numbers
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand((time_t)ts.tv_nsec);
+    double f = (double)rand() / RAND_MAX;
+    return fMin + f * (fMax - fMin);
+}
+
+void createPredecessorModel(){
+    for(int i=0; i<inputs;i++){
+        for(int j=0;j<rcpsp[i].getNumOfSuccessors();j++){
+            rcpsp[rcpsp[i].getSuccessorID(j)].pushPredecessorID(rcpsp[i].getActivity());
+        }
+    }
+}
+
+void createPriorityVector(){
+
+    vector<double> randArray;
+    int randInd=0;
+    for(int i=0;i<randArraySize;i++)
+        randArray.push_back(fRand(0,1));
+
+    for(int g=0;g<numOfParents;g++){
+        gen[g].clearPriorityVector();
+    }
+
+    for(int g=0;g<numOfParents;g++){
+        for(int i=0;i<numOfActivities;i++) { //VGALE EKSW TO START KAI TO FINISH
+            gen[g].pushPriorityVector(randArray[randInd]);
+            randInd++;
+        }
+    }
+}
+
+void createActivityVector(){
+    for(int g=0;g<numOfParents;g++){
+        gen[g].clearSolution();
+    }
+
+    for(int g=0;g<numOfParents;g++){
+        for(int i=0;i<numOfActivities;i++){
+            gen[g].pushSolution(0);
+        }
+    }
+
+    double tempMin=10.0;
+    double lastMin=0.0;
+    int rankValue;
+
+    for(int g=0;g<numOfParents;g++){
+        lastMin=0.0;
+        for(int rankInd=0;rankInd<numOfActivities;rankInd++){
+            tempMin=10.0;
+            for(int prioInd=0;prioInd<numOfActivities; prioInd++){
+                if((gen[g].getPriorityVector(prioInd)<tempMin) && (gen[g].getPriorityVector(prioInd)>lastMin)){
+                    tempMin=gen[g].getPriorityVector(prioInd);
+                    rankValue=prioInd;
+                }
+            }
+            gen[g].setSolution(rankValue,rankInd+1);
+            lastMin=tempMin;
+        }
+    }
+}
+
+bool allPredecessorsChecked(int act){
+    int exitInd=0;
+    bool ok;
+
+    while(exitInd<rcpsp[act].getNumOfPredecessors()){
+        if(rcpsp[rcpsp[act].getPredecessorID(exitInd)].isChecked()){
+            ok=true;
+            exitInd++;
+        }
+        else {
+            ok=false;
+            break;
+        }
+    }
+    return ok;   
+}
+
+int latestPredecessorFinish(int act){ 
+    int max=0;
+
+    for(int i=0;i<rcpsp[act].getNumOfPredecessors();i++){
+        if(rcpsp[rcpsp[act].getPredecessorID(i)].getFinish()>max){
+            max=rcpsp[rcpsp[act].getPredecessorID(i)].getFinish();
+        }
+    }
+    return max;
+}
+
+int timeActivityGoesInForward(int act, vector<vector<int>> funcTimeUnits){ //time unit that activity act goes in the schedule
+
+    int lpf=latestPredecessorFinish(act);
+    int dur=rcpsp[act].getDuration();
+    
+    int i=lpf;
+    while(i<lpf+dur){
+        for(int j=0;j<numOfResources;j++){
+            if(funcTimeUnits[i][j]+rcpsp[act].getDemand(j)>resourceCap[j]){
+                lpf++;
+                i=lpf-1;
+                break;
+            }
+        }
+        i++;
+    }
+    return lpf;
+}
+
+void calculateFinishTimeForward(){
+//--------------------------------------INIT-------------------------------------------
+//------------------------------------------------------------------------------------- 
+
+    vector<vector<int>> timeUnits; //pinakas me 8eseis oses oi xronikes monades kai value oso to total demand
+    vector<int> dummyVector;
+
+    for(int a=0;a<numOfResources;a++) dummyVector.push_back(0);
+    for(int a=0;a<maxTimeUnits;a++) timeUnits.push_back(dummyVector);
+
+    vector<int> currentSolution;
+//-------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------
+    for(int g=0;g<numOfParents;g++){ //MIDENISE TON PINAKA
+        gen[g].setTimeFinished(0);
+        for(int a=0;a<maxTimeUnits;a++){
+            for(int k=0;k<numOfResources; k++){
+                timeUnits[a][k]=0;
+            }
+        }
+
+        currentSolution.clear();
+        currentSolution.push_back(0);
+        for(int i=0;i<numOfActivities;i++) currentSolution.push_back(gen[g].getSolution(i));
+        currentSolution.push_back(inputs-1);
+
+        rcpsp[0].setaChecked(true);
+        for(int k=1;k<=inputs-1;k++){ //8ESE OLA TA ACTIVITIES NOT CHECKED
+        rcpsp[k].setaChecked(false);
+        }
+        //---------------------------------------------------------------------------------------------
+
+        int actInd=0;
+        int exitInd=0;
+        while(exitInd<inputs-1){ //MEXRI NA GINEI CHECKED TO FINISH
+            if((!rcpsp[currentSolution[actInd]].isChecked()) && (allPredecessorsChecked(currentSolution[actInd]))){
+                rcpsp[currentSolution[actInd]].setStart(timeActivityGoesInForward(currentSolution[actInd],timeUnits));//ANANEWSE TO START
+
+                int upperBound=rcpsp[currentSolution[actInd]].getFinish();
+
+                for(int update=rcpsp[currentSolution[actInd]].getStart();update<upperBound;update++){
+                    for(int resource=0;resource<numOfResources;resource++){ //update timeUnits
+                        timeUnits[update][resource]+=rcpsp[currentSolution[actInd]].getDemand(resource);
+                        if(update>gen[g].getTimeFinished()) gen[g].setTimeFinished(update); //TELIKO TIME FINISHED
+                    }
+                }
+
+                rcpsp[currentSolution[actInd]].setaChecked(true);
+                actInd=0;
+                exitInd++;
+            }
+            else actInd++;
+        }
+        gen[g].setTimeFinished(gen[g].getTimeFinished()+1);
+
+        if((gen[g].getTimeFinished()<best.getBestTime()) || best.bestKey){
+            best.setBestTime(gen[g].getTimeFinished());
+            best.clearBestSolution();
+            best.clearBestStart();
+            best.clearBestFinish();
+            for(int i=0;i<inputs-1; i++){
+                best.pushBestSolution(currentSolution[i]);
+                best.pushBestStart(rcpsp[currentSolution[i]].getStart());
+                best.pushBestFinish(rcpsp[currentSolution[i]].getFinish());
+            }
+            best.bestKey=false;
+        }
+    }
+}
+
+void geneticCrossover(){
+
+    vector<int> pairs;
+    pairs.clear();
+    for(int i=0;i<numOfParents;i++) {pairs.push_back(i);}
+
+    random_shuffle(pairs.begin(), pairs.end());
+
+    vector<double> randArray; //PINAKAS RANDOM DEKADIKON ARITHMON
+    int randInd=0;
+    for(int i=0;i<randArraySize;i++)
+        randArray.push_back(fRand(0,1));
+
+    int ind=0;
+    vector<double> tempVec;
+    tempVec.clear();
+
+    int splitPoint;
+
+    for(int g=0;g<numOfParents;g+=2){
+        splitPoint=1.0;
+        while(splitPoint<=numOfActivities){
+            if(randArray[randInd]>0.85)randArray[randInd]=0.5*randArray[randInd];
+            if(randArray[randInd]<splitPoint/(numOfActivities * 1.0)){
+
+                ind=0;
+                tempVec.clear();
+                //cout<<"pair "<<(g+2)/2<<": "<<pairs[g]<<" - "<<pairs[g+1]<<" Splitpoint:"<<splitPoint<<endl; 
+
+                for(int tmp=splitPoint-1;tmp<numOfActivities;tmp++){
+                    tempVec.push_back(gen[pairs[g]].getPriorityVector(tmp));
+                    gen[pairs[g]].setPriorityVector(tmp, gen[pairs[g+1]].getPriorityVector(tmp));
+                    gen[pairs[g+1]].setPriorityVector(tmp, tempVec[ind]);
+                    ind++;
+                }
+
+                randInd++;
+                break;
+            }
+            else splitPoint++;
+        }
+    }  
+}
+
+void geneticMutation(){
+    int mutatedChild=0;
+
+    for(int g=0;g<numOfParents;g++){
+        if(gen[g].getTimeFinished()>mutatedChild)
+            mutatedChild=g;
+    }
+
+    int mutatedActivity=fRand(0,numOfActivities);
+
+    //cout<<"MUTATED CHILD: "<<mutatedChild<<" ";
+    //cout<<"MUTATED ACTIVITY: "<<mutatedActivity<<endl;
+
+    gen[mutatedChild].setPriorityVector(mutatedActivity,gen[mutatedChild].getPriorityVector(mutatedActivity)*1.5);
+
+    //cout<<"Mutated Child no. "<<mutatedChild<<" activity "<<mutatedActivity<<"'s vector becomes "<<gen[mutatedChild].getPriorityVector(mutatedActivity)<<endl;
+}
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+void printBestSolution(){
+    cout<<"Best Solution Ever:"<<endl;
+    for(int i=0;i<inputs-1;i++){
+        cout<<best.getBestSolution(i)<<" "<<best.getBestStart(i)<<" "<<best.getBestFinish(i)<<endl;
+    }
+    cout<<"Best Time: "<<best.getBestTime()<<endl;
+}
+
+void printPriorityVector(){
+    cout<<"Vector of Priority: "<<endl;
+    for(int g=0;g<numOfParents;g++){
+        for(int i=0;i<numOfActivities;i++) {
+            cout<<gen[g].getPriorityVector(i)<<" ";
+        }
+        cout<<endl;
+    }
+}
+
+void printActivityVector(){
+    cout<<"Activities: "<<endl;
+
+    for(int g=0;g<numOfParents;g++){
+        for(int i=0;i<numOfActivities;i++){
+            cout<<gen[g].getSolution(i)<<" ";
+        }
+        cout<<endl;
+    }
+}
+
+void printPredecessorModel(){
+    cout<<"PREDECESSOR MODEL"<<endl;
+    for(int i=0;i<inputs;i++){
+        cout<<rcpsp[i].getActivity()<<" "<<rcpsp[i].getDuration()<<" ";
+        for(int j=0;j<numOfResources;j++)cout<<rcpsp[i].getDemand(j)<<" ";
+        for(int j=0;j<rcpsp[i].getNumOfPredecessors();j++) cout<<rcpsp[i].getPredecessorID(j)<<" ";
+        cout<<endl;
+    }
+}
+
+void printSuccessorModel(){
+    cout<<"SUCCESSOR MODEL"<<endl;
+    for(int i=0;i<inputs;i++){
+        cout<<rcpsp[i].getActivity()<<" "<<rcpsp[i].getDuration()<<" ";
+        for(int j=0;j<numOfResources;j++) cout<<rcpsp[i].getDemand(j)<<" ";
+        cout<<rcpsp[i].getNumOfSuccessors()<<" ";
+        for(int j=0;j<rcpsp[i].getNumOfSuccessors();j++) cout<<rcpsp[i].getSuccessorID(j)<<" ";
+        cout<<endl;
+    }
+}
+
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+
+void readData(){
+
+    rcpspClass();
+    generationClass();
+    bestClass();
+
+    best.bestINIT();
+
+    int in_activity=0; int in_duration; int *in_demand; int in_numOfSuccessors; int *in_successorID;vector<int> in_predecessorID; int in_start=0; bool in_aChecked=false;
+
+    //DUMMY VECTORS
+    vector<int> vec_activity;
+    vector<int> vec_duration;
+    vector<vector<int>> vec_demand;
+    vector<int> vec_demand_2;
+    vector<int> vec_numOfSuc;
+    vector<vector<int>> vec_sucID;
+    vector<int> vec_sucID_2;
+
+    vec_activity.clear();
+    vec_duration.clear();
+    vec_demand.clear();
+    vec_demand_2.clear();
+    vec_numOfSuc.clear();
+    vec_sucID.clear();
+    vec_sucID_2.clear();
+
+    in_predecessorID.clear();     
+
+    fstream in_file;
+    string ch;
+    string temp;
+
+    in_file.open(filename);
+    if(!in_file.is_open()) {
+        cout<<"mpa"<<endl;
+        exit(1);
+    }
+
+    int line=0;
+
+    while(!in_file.eof()){
+        if(line==0){
+            in_file>>inputs>>numOfResources;
+            rcpsp=new rcpspClass [inputs];
+            resourceCap=new int [numOfResources];
+            numOfActivities=inputs-2;
+        }
+
+        if(line==1){
+            for(int j=0;j<numOfResources;j++)
+                in_file>>resourceCap[j];
+        }
+
+        if(line>1){
+                vec_demand_2.clear();
+                vec_sucID_2.clear();
+
+                in_file>>in_duration;
+                vec_duration.push_back(in_duration);
+
+                in_demand=new int[numOfResources];
+                for(int i=0;i<numOfResources;i++){
+                    in_file>>in_demand[i];
+                    vec_demand_2.push_back(in_demand[i]);
+                }
+                vec_demand.push_back(vec_demand_2);
+                
+                in_file>>in_numOfSuccessors;
+                vec_numOfSuc.push_back(in_numOfSuccessors);
+
+                in_successorID=new int [in_numOfSuccessors];
+                for(int i=0;i<in_numOfSuccessors;i++){
+                    in_file>>in_successorID[i];
+                    in_successorID[i]--;
+                    vec_sucID_2.push_back(in_successorID[i]);
+                }
+                vec_sucID.push_back(vec_sucID_2);
+
+                vec_activity.push_back(in_activity);
+                in_activity++;
+
+                line++;
+                getline(in_file,ch);
+        }
+        line++;
+    }
+    in_file.close();
+    
+    for(int i=0;i<inputs;i++){
+        in_demand=new int [numOfResources];
+        in_activity=vec_activity[i];
+        in_duration=vec_duration[i];
+        for(int j=0;j<numOfResources;j++) in_demand[j]=vec_demand[i][j];
+        in_numOfSuccessors=vec_numOfSuc[i];
+        in_successorID=new int [in_numOfSuccessors];
+        for(int j=0;j<in_numOfSuccessors;j++) in_successorID[j]=vec_sucID[i][j];
+
+        rcpsp[i]=rcpspClass(in_activity,in_duration,in_demand,in_numOfSuccessors, in_successorID, in_predecessorID, in_start,in_aChecked);
+    }
+
+    for(int i=0;i<inputs;i++){
+        maxTimeUnits+=rcpsp[i].getDuration();
+    }
+}
+
+int main()
+{
+    clock_t start= clock();
+
+    string *fileVec;
+    fileVec=changeFilename(numOfFiles);
+
+    for(int fileLoop=0;fileLoop<numOfFiles;fileLoop++){
+
+        filename=fileVec[fileLoop];
+
+        readData();
+
+        createPredecessorModel();
+
+        createPriorityVector();
+
+        createActivityVector();
+
+        //printSuccessorModel();
+        
+        //printPredecessorModel();
+
+        //printPriorityVector();
+
+        //printActivityVector();
+        
+        calculateFinishTimeForward();
+
+        for(int loops=0;loops<geneticLoops;loops++){//GENETIC
+        //while(best.getBestTime()>43){
+
+            geneticCrossover();
+
+            geneticMutation();
+
+            createActivityVector();
+
+            //printPriorityVector();
+
+            //printActivityVector();
+
+            calculateFinishTimeForward();
+        }
+
+        printBestSolution();
+
+        createExcel();
+
+        clock_t end= clock();
+        double time_spent = (double)(end- start)/ CLOCKS_PER_SEC;
+
+        cout<<"Execution Time: "<<time_spent<<" sec\nFile: "<<filename<<endl;
+    }
+
+    return 0;
+}

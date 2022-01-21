@@ -1,0 +1,11 @@
+1 - check an ayto to activity den einai oloklirwmeno
+2 - check an ta predecessors einai oloklirwmena
+3 - an kai ta 2 panw einai TRUE -> ksekina na psaxneis se poio simeio mporei na mpei to current
+4 - molis to vreis anevase to timetable kata demand gia tin periodo pou einai mesa to activity
+5 - molis oloklirw8ei to construction to activity 8ese to isChecked
+6 - 8ese to index=0 kai ksekina psakse ap tin arxi to vectorOfActivities
+
+---------------timeActGoesIn-------------
+1 - check se poio simeio teleiwnoun oloi oi predecessors tou
+2 - check apo tin stigmi pou teleiwnei o predecessor an xwrai na mpei to activity
+3 - an xwraei kan to append oso paei - an oxi dokimase na to ksekiniseis apo tin epomeni xroniki stigmi
